@@ -9,3 +9,6 @@ uv.lock
 
 # Virtual environments
 .venv
+
+# Mise
+.mise.local.toml

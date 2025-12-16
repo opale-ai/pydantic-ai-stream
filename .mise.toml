@@ -7,5 +7,7 @@ REDIS_URL = "redis://{{env.REDIS_HOST}}:{{env.REDIS_PORT}}"
 REDIS_POOL_SIZE = 10
 REDIS_ASYNC_POOL_SIZE = 10
 
-[tasks.install]
-run = "uv pip install -e ."
+PYDANTIC_AI_GATEWAY_API_KEY = "<secret>"
+
+[tasks.examples-deps]
+run = ["uv pip install -e .", "uv pip install -U typer"]

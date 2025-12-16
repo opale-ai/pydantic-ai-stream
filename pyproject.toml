@@ -1,7 +1,7 @@
 [project]
 name = "opale-agent-stream"
 version = "0.1.0"
-description = "Add your description here"
+description = ""
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = ["pydantic-ai>=1.33.0", "redis>=7.1.0"]
