@@ -1,2 +1,11 @@
 [env]
 _.python.venv = ".venv"
+
+REDIS_HOST = "localhost"
+REDIS_PORT = 6379
+REDIS_URL = "redis://{{env.REDIS_HOST}}:{{env.REDIS_PORT}}"
+REDIS_POOL_SIZE = 10
+REDIS_ASYNC_POOL_SIZE = 10
+
+[tasks.install]
+run = "uv pip install -e ."

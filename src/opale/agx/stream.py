@@ -1,9 +1,9 @@
 import base64
 from typing import AsyncGenerator
+import json
 
-import orjson
-from opale.redis import AGX_SESSION, AGX_SESSION_LIVE
-from opale.redis import aclient as redis_aclient
+from .store import aclient as redis_aclient
+from .store import AGX_SESSION, AGX_SESSION_LIVE
 
 
 async def start(
@@ -65,7 +65,7 @@ async def add(
         "origin": origin,
     }
     if body is not None:
-        fields["body"] = orjson.dumps(body)
+        fields["body"] = json.dumps(body)
     await redis_aclient.xadd(
         AGX_SESSION.format(scope_id=scope_id, user_id=user_id, session_id=session_id),
         fields,
@@ -112,16 +112,15 @@ async def listen(
                     if type == "end":
                         return
                     origin = entry[b"origin"].decode()
-                    body = orjson.loads(entry[b"body"])
+                    body = json.loads(entry[b"body"])
                     entry = {"type": type, "origin": origin, "body": body}
                     if not serialize:
                         yield entry
                     else:
-                        entry["body"] = base64.b64encode(orjson.dumps(body)).decode(
-                            "ascii"
-                        )
-
-                        yield orjson.dumps(entry)
+                        entry["body"] = base64.b64encode(
+                            json.dumps(body).encode()
+                        ).decode("ascii")
+                        yield json.dumps(entry)
 
 
 async def cancel(
@@ -139,7 +138,9 @@ async def cancel(
 
 
 async def q(
-    *, scope_id: int = None, user_id: int = None
+    *,
+    scope_id: int | None = None,
+    user_id: int | None = None,
 ) -> AsyncGenerator[tuple[int, int, str], None]:
     async for k in redis_aclient.scan_iter(
         AGX_SESSION_LIVE.format(

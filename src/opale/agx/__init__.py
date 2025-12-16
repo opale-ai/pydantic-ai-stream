@@ -15,7 +15,13 @@ class AgxCanceledException(Exception):
     pass
 
 
-async def run(session: Session, agent: Agent, user_prompt: str, deps: Deps, **kwargs):
+async def run(
+    session: Session,
+    agent: Agent,
+    user_prompt: str,
+    deps: Deps,
+    **kwargs,
+):
     await session.load()
     await stream_start(deps.get_scope_id(), deps.user_id, deps.session_id)
     try:
