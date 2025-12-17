@@ -1,22 +1,18 @@
-import base64
-from typing import AsyncGenerator
-import json
+from collections.abc import AsyncGenerator
+from typing import Any
 
-from .store import aclient as redis_aclient
-from .store import AGX_SESSION, AGX_SESSION_LIVE
+import orjson
+
+from .config import get_config, live_key, stream_key
 
 
 async def start(
     scope_id: int,
     user_id: int,
     session_id: str,
-):
-    await redis_aclient.set(
-        AGX_SESSION_LIVE.format(
-            scope_id=scope_id, user_id=user_id, session_id=session_id
-        ),
-        1,
-    )
+) -> None:
+    cfg = get_config()
+    await cfg.redis.set(live_key(scope_id, user_id, session_id), 1)
     await add(
         scope_id,
         user_id,
@@ -31,24 +27,12 @@ async def stop(
     scope_id: int,
     user_id: int,
     session_id: str,
-    grace_period=5,
-):
-    await add(
-        scope_id,
-        user_id,
-        session_id,
-        type="end",
-        origin="opale",
-    )
-    await redis_aclient.delete(
-        AGX_SESSION_LIVE.format(
-            scope_id=scope_id, user_id=user_id, session_id=session_id
-        )
-    )
-    await redis_aclient.expire(
-        AGX_SESSION.format(scope_id=scope_id, user_id=user_id, session_id=session_id),
-        grace_period,
-    )
+    grace_period: int = 5,
+) -> None:
+    cfg = get_config()
+    await add(scope_id, user_id, session_id, type="end", origin="opale")
+    await cfg.redis.delete(live_key(scope_id, user_id, session_id))
+    await cfg.redis.expire(stream_key(scope_id, user_id, session_id), grace_period)
 
 
 async def add(
@@ -58,18 +42,13 @@ async def add(
     *,
     type: str,
     origin: str,
-    body: dict | None = None,
-):
-    fields = {
-        "type": type,
-        "origin": origin,
-    }
+    body: dict[str, Any] | None = None,
+) -> None:
+    cfg = get_config()
+    fields: dict[str, Any] = {"type": type, "origin": origin}
     if body is not None:
-        fields["body"] = json.dumps(body)
-    await redis_aclient.xadd(
-        AGX_SESSION.format(scope_id=scope_id, user_id=user_id, session_id=session_id),
-        fields,
-    )
+        fields["body"] = orjson.dumps(body)
+    await cfg.redis.xadd(stream_key(scope_id, user_id, session_id), fields)  # type: ignore[arg-type]
 
 
 async def is_live(
@@ -77,14 +56,8 @@ async def is_live(
     user_id: int,
     session_id: str,
 ) -> bool:
-    return (
-        await redis_aclient.get(
-            AGX_SESSION_LIVE.format(
-                scope_id=scope_id, user_id=user_id, session_id=session_id
-            )
-        )
-        is not None
-    )
+    cfg = get_config()
+    return await cfg.redis.get(live_key(scope_id, user_id, session_id)) is not None
 
 
 async def listen(
@@ -92,35 +65,34 @@ async def listen(
     user_id: int,
     session_id: str,
     *,
-    wait: int = 3,  # time to wait for processing to start
-    timeout: int = 60,  # time to wait for no logs before leaving
+    wait: int = 3,
+    timeout: int = 60,
     serialize: bool = True,
-) -> AsyncGenerator[dict | bytes, None]:
-    key = AGX_SESSION.format(scope_id=scope_id, user_id=user_id, session_id=session_id)
-    counter, id = 0, 0
+) -> AsyncGenerator[dict[str, Any] | str, None]:
+    cfg = get_config()
+    key = stream_key(scope_id, user_id, session_id)
+    counter, last_id = 0, "0"
     while True:
-        res = await redis_aclient.xread({key: id}, block=1000)
+        res = await cfg.redis.xread({key: last_id}, block=1000)
         if len(res) == 0:
-            if id == 0 and counter == wait or id != 0 and counter == timeout:
+            if (last_id == "0" and counter >= wait) or (last_id != "0" and counter >= timeout):
                 break
             counter += 1
-        else:
-            counter = 0
-            for _, entries in res:
-                for id, entry in entries:
-                    type = entry[b"type"].decode()
-                    if type == "end":
-                        return
-                    origin = entry[b"origin"].decode()
-                    body = json.loads(entry[b"body"])
-                    entry = {"type": type, "origin": origin, "body": body}
-                    if not serialize:
-                        yield entry
-                    else:
-                        entry["body"] = base64.b64encode(
-                            json.dumps(body).encode()
-                        ).decode("ascii")
-                        yield json.dumps(entry)
+            continue
+        counter = 0
+        for _, entries in res:
+            for entry_id, entry in entries:
+                last_id = entry_id if isinstance(entry_id, str) else entry_id.decode()
+                ev_type = entry[b"type"].decode()
+                if ev_type == "end":
+                    return
+                ev_origin = entry[b"origin"].decode()
+                ev_body: dict[str, Any] = orjson.loads(entry.get(b"body", b"{}"))
+                event: dict[str, Any] = {"type": ev_type, "origin": ev_origin, "body": ev_body}
+                if serialize:
+                    yield orjson.dumps(event).decode()
+                else:
+                    yield event
 
 
 async def cancel(
@@ -128,26 +100,19 @@ async def cancel(
     user_id: int,
     session_id: str,
 ) -> bool:
-    return (
-        await redis_aclient.getdel(
-            AGX_SESSION_LIVE.format(
-                scope_id=scope_id, user_id=user_id, session_id=session_id
-            )
-        )
-    ) is not None
+    cfg = get_config()
+    return await cfg.redis.getdel(live_key(scope_id, user_id, session_id)) is not None
 
 
 async def q(
-    *,
-    scope_id: int | None = None,
-    user_id: int | None = None,
+    scope_id: int,
+    user_id: int,
 ) -> AsyncGenerator[tuple[int, int, str], None]:
-    async for k in redis_aclient.scan_iter(
-        AGX_SESSION_LIVE.format(
-            scope_id=str(scope_id) if scope_id is not None else "*",
-            user_id=str(user_id) if user_id is not None else "*",
-            session_id="*",
-        )
-    ):
-        _, scope_id, user_id, session_id, *_ = k.decode().split(":")
-        yield int(scope_id), int(user_id), session_id
+    cfg = get_config()
+    pattern = f"{cfg.key_prefix}:{scope_id}:{user_id}:*:live"
+    async for k in cfg.redis.scan_iter(pattern):
+        key_str = k if isinstance(k, str) else k.decode()
+        parts = key_str.rsplit(":", 4)
+        if len(parts) >= 4:
+            _, s_id, u_id, sess_id = parts[0], parts[-4], parts[-3], parts[-2]
+            yield int(s_id), int(u_id), sess_id

@@ -1,11 +1,43 @@
 [project]
 name = "opale-agent-stream"
 version = "0.1.0"
-description = ""
+description = "Production runtime for pydantic-ai agents with structured event streaming, session persistence, and cancellation"
 readme = "README.md"
-requires-python = ">=3.12"
-dependencies = ["pydantic-ai>=1.33.0", "redis>=7.1.0"]
+license = "MIT"
+requires-python = ">=3.11"
 authors = [{ name = "Opale OSS", email = "oss@opale.ai" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+keywords = ["pydantic-ai", "agent", "streaming", "redis", "llm"]
+dependencies = [
+    "pydantic-ai>=1.33.0",
+    "redis>=`7.1.0",
+    "orjson>=3.10",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "fakeredis>=2.26",
+    "mypy>=1.13",
+    "ruff>=0.8",
+]
+
+[project.urls]
+Homepage = "https://github.com/opale-oss/pydantic-ai-stream"
+Repository = "https://github.com/opale-oss/pydantic-ai-stream"
+Documentation = "https://github.com/opale-oss/pydantic-ai-stream#readme"
 
 [build-system]
 requires = ["hatchling"]
@@ -13,3 +45,22 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/opale"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]
