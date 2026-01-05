@@ -110,7 +110,7 @@ async def test_q_yields_active_sessions(redis):
     deps_list = [
         AppDeps(redis=redis, user_id=2, session_id=f"10.{i + 1}") for i in range(3)
     ]
-    asyncio.gather(*(deps.start() for deps in deps_list))
+    await asyncio.gather(*(deps.start() for deps in deps_list))
     sessions = []
     async for scope_id, user_id, session_id in q(redis, deps_list[0].get_scope_id(), 2):
         sessions.append((scope_id, user_id, session_id))
