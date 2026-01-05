@@ -1,6 +1,9 @@
 [env]
 _.python.venv = ".venv"
 
+UV_PUBLISH_USERNAME = "__token__"
+UV_PUBLISH_PASSWORD = "<secret>"
+
 REDIS_HOST = "localhost"
 REDIS_PORT = 6379
 REDIS_URL = "redis://{{env.REDIS_HOST}}:{{env.REDIS_PORT}}"
