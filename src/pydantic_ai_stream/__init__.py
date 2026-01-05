@@ -1,15 +1,13 @@
 import logging
 
 from pydantic_ai import Agent
-from typing import Any, AsyncGenerator, TYPE_CHECKING
+from typing import Any, AsyncGenerator
+from redis.asyncio import Redis as AsyncRedis
 
 from .settings import settings
 from .deps import Deps
 from .session import Session
 
-
-if TYPE_CHECKING:
-    from redis.asyncio import Redis as AsyncRedis
 
 __all__ = ["settings", "Deps", "Session", "AgxCanceledError", "run", "q"]
 
@@ -30,7 +28,9 @@ async def run(
     await session.load()
     await deps.start()
     try:
-        async with agent.iter(user_prompt, deps=deps, message_history=session.msgs, **kwargs) as agent_run:  # type: ignore[arg-type]
+        async with agent.iter(
+            user_prompt, deps=deps, message_history=session.msgs, **kwargs
+        ) as agent_run:  # type: ignore[arg-type]
             async for node in agent_run:
                 if not await deps.is_live():
                     raise AgxCanceledError()
@@ -58,7 +58,9 @@ async def q(
     scope_id: int,
     user_id: int,
 ) -> AsyncGenerator[tuple[int, int, str], None]:
-    async for k in redis.scan_iter(f"{settings.redis_prefix}:{scope_id}:{user_id}:*:live"):
+    async for k in redis.scan_iter(
+        f"{settings.redis_prefix}:{scope_id}:{user_id}:*:live"
+    ):
         key_str = k if isinstance(k, str) else k.decode()
         parts = key_str.rsplit(":", 4)
         if len(parts) >= 4:

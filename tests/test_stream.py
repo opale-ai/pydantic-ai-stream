@@ -1,4 +1,3 @@
-
 import pytest
 import orjson
 
@@ -43,7 +42,14 @@ async def test_stop_emits_end_event(redis):
 
 @pytest.mark.asyncio
 async def test_add_event(redis):
-    await add(1, 100, "session-5", type="event", origin="pydantic-ai", body={"idx": 0, "event": "llm-begin"})
+    await add(
+        1,
+        100,
+        "session-5",
+        type="event",
+        origin="pydantic-ai",
+        body={"idx": 0, "event": "llm-begin"},
+    )
     key = "test:1:100:session-5"
     entries = await redis.xrange(key)
     assert len(entries) == 1

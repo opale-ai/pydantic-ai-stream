@@ -1,7 +1,7 @@
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from collections.abc import AsyncGenerator
 import json
 
@@ -18,12 +18,11 @@ from pydantic_ai.messages import (
     ToolCallPartDelta,
     ToolReturnPart,
 )
+from redis.asyncio import Redis as AsyncRedis
+from pydantic_ai._agent_graph import ModelRequestNode
 
 from .settings import settings
 
-if TYPE_CHECKING:
-    from redis.asyncio import Redis as AsyncRedis
-    from pydantic_ai._agent_graph import ModelRequestNode
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +42,7 @@ class Runtime:
 
 @dataclass(kw_only=True)
 class Deps(ABC):
-    redis: "AsyncRedis"
+    redis: AsyncRedis
     user_id: int
     session_id: str
     runtime: Runtime = field(default_factory=Runtime)
@@ -58,13 +57,15 @@ class Deps(ABC):
     def key_live(self) -> str:
         return f"{settings.redis_prefix}:{self.get_scope_id()}:{self.user_id}:{self.session_id}:live"
 
-    async def add(self, *, type: str, origin: str, body: dict[str, Any] | None = None) -> None:
+    async def add(
+        self, *, type: str, origin: str, body: dict[str, Any] | None = None
+    ) -> None:
         fields: dict[str, Any] = {"type": type, "origin": origin}
         if body is not None:
             fields["body"] = json.dumps(body)
         await self.redis.xadd(self.key(), fields)  # type: ignore[arg-type]
 
-    async def add_node_begin(self, node: "ModelRequestNode[Any, Any]") -> None:
+    async def add_node_begin(self, node: ModelRequestNode[Any, Any]) -> None:
         new = Node(idx=len(self.runtime.nodes))
         self.runtime.nodes.append(new)
         await self.add(
@@ -97,7 +98,9 @@ class Deps(ABC):
         )
         current.stopped = True
 
-    async def add_node_event(self, event: PartStartEvent | PartDeltaEvent | FinalResultEvent | Any) -> None:
+    async def add_node_event(
+        self, event: PartStartEvent | PartDeltaEvent | FinalResultEvent | Any
+    ) -> None:
         current = self.runtime.nodes[-1]
         body: dict[str, Any] = {"idx": current.idx}
         if isinstance(event, PartStartEvent):
@@ -204,20 +207,28 @@ class Deps(ABC):
         while True:
             res = await self.redis.xread({self.key(): last_id}, block=1000)
             if len(res) == 0:
-                if (last_id == "0" and counter >= wait) or (last_id != "0" and counter >= timeout):
+                if (last_id == "0" and counter >= wait) or (
+                    last_id != "0" and counter >= timeout
+                ):
                     break
                 counter += 1
                 continue
             counter = 0
             for _, entries in res:
                 for entry_id, entry in entries:
-                    last_id = entry_id if isinstance(entry_id, str) else entry_id.decode()
+                    last_id = (
+                        entry_id if isinstance(entry_id, str) else entry_id.decode()
+                    )
                     ev_type = entry[b"type"].decode()
                     if ev_type == "end":
                         return
                     ev_origin = entry[b"origin"].decode()
                     ev_body: dict[str, Any] = json.loads(entry.get(b"body", "{}"))
-                    event: dict[str, Any] = {"type": ev_type, "origin": ev_origin, "body": ev_body}
+                    event: dict[str, Any] = {
+                        "type": ev_type,
+                        "origin": ev_origin,
+                        "body": ev_body,
+                    }
                     if serialize:
                         yield json.dumps(event)
                     else:

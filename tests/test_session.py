@@ -60,7 +60,10 @@ class TestNodesFromMsgs:
 
     def test_valid_request_response_pair(self):
         msgs = [
-            {"kind": "request", "parts": [{"part_kind": "user-prompt", "content": "Hi"}]},
+            {
+                "kind": "request",
+                "parts": [{"part_kind": "user-prompt", "content": "Hi"}],
+            },
             {"kind": "response", "parts": [{"part_kind": "text", "content": "Hello"}]},
         ]
         nodes = Session.nodes_from_msgs(msgs)
@@ -70,7 +73,10 @@ class TestNodesFromMsgs:
 
     def test_filters_system_prompt(self):
         msgs = [
-            {"kind": "request", "parts": [{"part_kind": "system-prompt"}, {"part_kind": "user-prompt"}]},
+            {
+                "kind": "request",
+                "parts": [{"part_kind": "system-prompt"}, {"part_kind": "user-prompt"}],
+            },
             {"kind": "response", "parts": [{"part_kind": "text"}]},
         ]
         nodes = Session.nodes_from_msgs(msgs)

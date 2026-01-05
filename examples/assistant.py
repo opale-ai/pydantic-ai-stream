@@ -1,18 +1,17 @@
+from beartype.cave import AsyncCTypes
+import os
 from dataclasses import dataclass
 from typing import AsyncGenerator
 from pathlib import Path
-import typer
 from functools import wraps
 import asyncio
 import json
 
-from opale.agx import run as agx_run
-from opale.agx.deps import Deps as AgxDeps
-from opale.agx.session import Session as AgxSession
-from opale.agx.stream import listen as agx_stream_listen
-
+import typer
 from pydantic_ai import Agent
+from redis.asyncio import Redis as AsyncRedis
 
+from pydantic_ai_stream import run, Deps, Session
 
 DATA = Path(__file__).parent / "data"
 DATA.mkdir(exist_ok=True)
@@ -30,27 +29,11 @@ def run_async(f):
     return wrapper
 
 
-# Pydantic AI Agent definition
+# Session class (mainly to implement save and load for persistence)
 
 
 @dataclass
-class MyDeps(AgxDeps):
-    def get_scope_id(self):
-        return 0  # Not needed in this simple example
-
-
-agent = Agent(
-    "gateway/groq:openai/gpt-oss-120b",
-    system_prompt="You are a helpful personal agent",
-    deps_type=MyDeps,
-)
-
-
-# Agx Session class (mainly to implement save and load)
-
-
-@dataclass
-class MySession(AgxSession):
+class MySession(Session):
     id: str
 
     @property
@@ -72,37 +55,49 @@ class MySession(AgxSession):
                 return self.nodes_from_msgs(json.load(f))
 
 
-@app.command()
-@run_async
-async def prompt(
-    session_id: str,
-    prompt: str,
-):
+# Pydantic AI Agent definition
+
+
+@dataclass
+class MyDeps(Deps):
+    def get_scope_id(self):
+        return 0  # Not needed in this simple example
+
+
+agent = Agent(
+    "gateway/groq:openai/gpt-oss-120b",
+    system_prompt="You are a helpful personal agent",
+    deps_type=MyDeps,
+)
+
+
+async def agent_ask(deps: MyDeps, session_id: str, prompt: str):
     agent.name = session_id
     async with agent:
-        await agx_run(
-            MySession(id=session_id),
-            agent,
-            prompt,
-            deps=MyDeps(
-                user_id=0,
-                session_id=session_id,
-            ),
-        )
+        await run(MySession(id=session_id), agent, prompt, deps)
+
+
+async def agent_listen(deps: MyDeps) -> AsyncGenerator[dict | bytes, None]:
+    async for entry in deps.listen():
+        print(entry)
 
 
 @app.command()
 @run_async
-async def stream_listen(
-    session_id: str,
-) -> AsyncGenerator[dict | bytes, None]:
-    async for entry in agx_stream_listen(0, 0, session_id):
-        yield entry
-
+async def prompt(session_id: str, prompt: str):
+    redis = AsyncRedis.from_url(os.environ["REDIS_URL"])
+    deps = MyDeps(
+        redis=redis,
+        user_id=0,
+        session_id=session_id,
+    )
+    t1 = asyncio.create_task(agent_ask(deps, session_id, prompt))
+    t2 = asyncio.create_task(agent_listen(deps))
+    await asyncio.gather(t1, t2)
 
 @app.command()
 @run_async
-async def session_read(session_id: str):
+async def read(session_id: str):
     nodes = await MySession(id=session_id).parse_nodes()
     print(json.dumps(nodes, indent=2))
 
