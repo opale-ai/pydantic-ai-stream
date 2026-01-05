@@ -7,7 +7,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from opale.agx import Session
+from pydantic_ai_stream import Session
 
 
 @dataclass

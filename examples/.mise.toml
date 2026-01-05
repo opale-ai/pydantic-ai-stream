@@ -1,2 +1,0 @@
-[env]
-PYTHONPATH = "{{config_root}}/../src"

@@ -1,7 +1,5 @@
-from beartype.cave import AsyncCTypes
 import os
 from dataclasses import dataclass
-from typing import AsyncGenerator
 from pathlib import Path
 from functools import wraps
 import asyncio
@@ -77,7 +75,7 @@ async def agent_ask(deps: MyDeps, session_id: str, prompt: str):
         await run(MySession(id=session_id), agent, prompt, deps)
 
 
-async def agent_listen(deps: MyDeps) -> AsyncGenerator[dict | bytes, None]:
+async def agent_listen(deps: MyDeps):
     async for entry in deps.listen():
         print(entry)
 
@@ -94,6 +92,7 @@ async def prompt(session_id: str, prompt: str):
     t1 = asyncio.create_task(agent_ask(deps, session_id, prompt))
     t2 = asyncio.create_task(agent_listen(deps))
     await asyncio.gather(t1, t2)
+
 
 @app.command()
 @run_async
