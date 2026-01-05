@@ -3,12 +3,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from collections.abc import AsyncGenerator
+import json
 
-import orjson
 from pydantic_ai.messages import (
     FinalResultEvent,
     PartDeltaEvent,
     PartStartEvent,
+    PartEndEvent,
     TextPart,
     TextPartDelta,
     ThinkingPart,
@@ -60,7 +61,7 @@ class Deps(ABC):
     async def add(self, *, type: str, origin: str, body: dict[str, Any] | None = None) -> None:
         fields: dict[str, Any] = {"type": type, "origin": origin}
         if body is not None:
-            fields["body"] = orjson.dumps(body)
+            fields["body"] = json.dumps(body)
         await self.redis.xadd(self.key(), fields)  # type: ignore[arg-type]
 
     async def add_node_begin(self, node: "ModelRequestNode[Any, Any]") -> None:
@@ -78,6 +79,7 @@ class Deps(ABC):
                     origin="pydantic-ai",
                     body={
                         "idx": new.idx,
+                        "event": "part_start",
                         "part_kind": part.part_kind,
                         "tool_name": part.tool_name,
                         "tool_call_id": part.tool_call_id,
@@ -88,18 +90,6 @@ class Deps(ABC):
     async def add_node_end(self) -> None:
         current = self.runtime.nodes[-1]
         assert not current.stopped
-        for idx in sorted(current.parts.keys()):
-            event = current.events[idx]
-            part = current.parts[idx]
-            args_str = part["args"]
-            if args_str.startswith("{}"):
-                args_str = args_str[2:]
-            part["args"] = orjson.loads(args_str)
-            await self.add(
-                type="event",
-                origin="pydantic-ai",
-                body={"idx": current.idx, "event": event, "event_idx": idx} | part,
-            )
         await self.add(
             type="event",
             origin="pydantic-ai",
@@ -112,13 +102,18 @@ class Deps(ABC):
         body: dict[str, Any] = {"idx": current.idx}
         if isinstance(event, PartStartEvent):
             current.events[event.index] = event.event_kind
-            body |= {"event": event.event_kind, "event_idx": event.index}
             part = event.part
             if isinstance(part, (TextPart, ThinkingPart)):
                 await self.add(
                     type="event",
                     origin="pydantic-ai",
-                    body=body | {"part_kind": part.part_kind, "content": part.content},
+                    body=body
+                    | {
+                        "event": event.event_kind,
+                        "event_idx": event.index,
+                        "part_kind": part.part_kind,
+                        "content": part.content,
+                    },
                 )
             elif isinstance(part, ToolCallPart):
                 current.parts[event.index] = {
@@ -128,13 +123,18 @@ class Deps(ABC):
                     "args": part.args_as_json_str(),
                 }
         elif isinstance(event, PartDeltaEvent):
-            body |= {"event": event.event_kind, "event_idx": event.index}
             delta = event.delta
             if isinstance(delta, (TextPartDelta, ThinkingPartDelta)):
                 await self.add(
                     type="event",
                     origin="pydantic-ai",
-                    body=body | {"part_delta_kind": delta.part_delta_kind, "content_delta": delta.content_delta},
+                    body=body
+                    | {
+                        "event": event.event_kind,
+                        "event_idx": event.index,
+                        "part_delta_kind": delta.part_delta_kind,
+                        "content_delta": delta.content_delta,
+                    },
                 )
             elif isinstance(delta, ToolCallPartDelta):
                 stored_part = current.parts[event.index]
@@ -143,6 +143,21 @@ class Deps(ABC):
                     stored_part["tool_name"] += delta.tool_name_delta
                 if delta.args_delta:
                     stored_part["args"] += delta.args_delta
+        elif isinstance(event, PartEndEvent):
+            if isinstance(event.part, ToolCallPart):
+                part = current.parts[event.index]
+                assert part["tool_call_id"] == ToolCallPart, event.part.tool_call_id
+                part["args"] = json.loads(part["args"])
+                await self.add(
+                    type="event",
+                    origin="pydantic-ai",
+                    body=body
+                    | {
+                        "event": current.events[event.index],
+                        "event_idx": event.index,
+                    }
+                    | part,
+                )
         elif isinstance(event, FinalResultEvent):
             await self.add(
                 type="event",
@@ -152,14 +167,14 @@ class Deps(ABC):
         else:
             logger.error(f"Unknown event type - {type(event).__name__}")
 
-    async def add_error(self, body: dict[str, Any], origin: str = "opale") -> None:
+    async def add_error(self, body: dict[str, Any], origin: str = "developer") -> None:
         await self.add(
             type="error",
             origin=origin,
             body=body,
         )
 
-    async def add_info(self, body: dict[str, Any], origin: str = "opale") -> None:
+    async def add_info(self, body: dict[str, Any], origin: str = "developer") -> None:
         await self.add(
             type="info",
             origin=origin,
@@ -170,12 +185,12 @@ class Deps(ABC):
         await self.redis.set(self.key_live(), 1)
         await self.add(
             type="begin",
-            origin="opale",
+            origin="pydantic-ai-stream",
             body={"session_id": self.session_id},
         )
 
     async def stop(self, grace_period: int = 5) -> None:
-        await self.add(type="end", origin="opale")
+        await self.add(type="end", origin="pydantic-ai-stream")
         await self.redis.delete(self.key_live())
         await self.redis.expire(self.key(), grace_period)
 
@@ -201,10 +216,10 @@ class Deps(ABC):
                     if ev_type == "end":
                         return
                     ev_origin = entry[b"origin"].decode()
-                    ev_body: dict[str, Any] = orjson.loads(entry.get(b"body", b"{}"))
+                    ev_body: dict[str, Any] = json.loads(entry.get(b"body", "{}"))
                     event: dict[str, Any] = {"type": ev_type, "origin": ev_origin, "body": ev_body}
                     if serialize:
-                        yield orjson.dumps(event).decode()
+                        yield json.dumps(event)
                     else:
                         yield event
 
