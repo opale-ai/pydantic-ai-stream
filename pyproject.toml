@@ -1,5 +1,5 @@
 [project]
-name = "opale-agent-stream"
+name = "pydantic-ai-stream"
 version = "0.1.0"
 description = "Production runtime for pydantic-ai agents with structured event streaming, session persistence, and cancellation"
 readme = "README.md"
@@ -35,9 +35,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/opale-oss/pydantic-ai-stream"
-Repository = "https://github.com/opale-oss/pydantic-ai-stream"
-Documentation = "https://github.com/opale-oss/pydantic-ai-stream#readme"
+Homepage = "https://github.com/opale/pydantic-ai-stream"
+Repository = "https://github.com/opale/pydantic-ai-stream"
 
 [build-system]
 requires = ["hatchling"]
