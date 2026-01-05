@@ -1,4 +1,3 @@
-import asyncio
 
 import pytest
 import orjson
@@ -105,4 +104,3 @@ async def test_q_yields_active_sessions(redis):
     session_ids = {s[2] for s in sessions}
     assert "session-a" in session_ids
     assert "session-b" in session_ids
-

@@ -1,4 +1,3 @@
-import pytest
 from dataclasses import dataclass
 
 from pydantic_ai.messages import (
@@ -76,4 +75,3 @@ class TestNodesFromMsgs:
         ]
         nodes = Session.nodes_from_msgs(msgs)
         assert len(nodes[0]["parts"]) == 2
-

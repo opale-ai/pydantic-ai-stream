@@ -2,6 +2,7 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+from collections.abc import AsyncGenerator
 
 import orjson
 from pydantic_ai.messages import (
@@ -17,9 +18,10 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 
-from .stream import add
+from .settings import settings
 
 if TYPE_CHECKING:
+    from redis.asyncio import Redis as AsyncRedis
     from pydantic_ai._agent_graph import ModelRequestNode
 
 logger = logging.getLogger(__name__)
@@ -40,31 +42,38 @@ class Runtime:
 
 @dataclass(kw_only=True)
 class Deps(ABC):
+    redis: "AsyncRedis"
     user_id: int
     session_id: str
     runtime: Runtime = field(default_factory=Runtime)
 
     @abstractmethod
     def get_scope_id(self) -> int:
-        pass
+        raise NotImplementedError()
+
+    def key(self) -> str:
+        return f"{settings.redis_prefix}:{self.get_scope_id()}:{self.user_id}:{self.session_id}"
+
+    def key_live(self) -> str:
+        return f"{settings.redis_prefix}:{self.get_scope_id()}:{self.user_id}:{self.session_id}:live"
+
+    async def add(self, *, type: str, origin: str, body: dict[str, Any] | None = None) -> None:
+        fields: dict[str, Any] = {"type": type, "origin": origin}
+        if body is not None:
+            fields["body"] = orjson.dumps(body)
+        await self.redis.xadd(self.key(), fields)  # type: ignore[arg-type]
 
     async def add_node_begin(self, node: "ModelRequestNode[Any, Any]") -> None:
         new = Node(idx=len(self.runtime.nodes))
         self.runtime.nodes.append(new)
-        await add(
-            self.get_scope_id(),
-            self.user_id,
-            self.session_id,
+        await self.add(
             type="event",
             origin="pydantic-ai",
             body={"idx": new.idx, "event": "llm-begin"},
         )
         for part in node.request.parts:
             if isinstance(part, ToolReturnPart):
-                await add(
-                    self.get_scope_id(),
-                    self.user_id,
-                    self.session_id,
+                await self.add(
                     type="event",
                     origin="pydantic-ai",
                     body={
@@ -86,18 +95,12 @@ class Deps(ABC):
             if args_str.startswith("{}"):
                 args_str = args_str[2:]
             part["args"] = orjson.loads(args_str)
-            await add(
-                self.get_scope_id(),
-                self.user_id,
-                self.session_id,
+            await self.add(
                 type="event",
                 origin="pydantic-ai",
                 body={"idx": current.idx, "event": event, "event_idx": idx} | part,
             )
-        await add(
-            self.get_scope_id(),
-            self.user_id,
-            self.session_id,
+        await self.add(
             type="event",
             origin="pydantic-ai",
             body={"idx": current.idx, "event": "llm-end"},
@@ -112,10 +115,7 @@ class Deps(ABC):
             body |= {"event": event.event_kind, "event_idx": event.index}
             part = event.part
             if isinstance(part, (TextPart, ThinkingPart)):
-                await add(
-                    self.get_scope_id(),
-                    self.user_id,
-                    self.session_id,
+                await self.add(
                     type="event",
                     origin="pydantic-ai",
                     body=body | {"part_kind": part.part_kind, "content": part.content},
@@ -131,10 +131,7 @@ class Deps(ABC):
             body |= {"event": event.event_kind, "event_idx": event.index}
             delta = event.delta
             if isinstance(delta, (TextPartDelta, ThinkingPartDelta)):
-                await add(
-                    self.get_scope_id(),
-                    self.user_id,
-                    self.session_id,
+                await self.add(
                     type="event",
                     origin="pydantic-ai",
                     body=body | {"part_delta_kind": delta.part_delta_kind, "content_delta": delta.content_delta},
@@ -147,10 +144,7 @@ class Deps(ABC):
                 if delta.args_delta:
                     stored_part["args"] += delta.args_delta
         elif isinstance(event, FinalResultEvent):
-            await add(
-                self.get_scope_id(),
-                self.user_id,
-                self.session_id,
+            await self.add(
                 type="event",
                 origin="pydantic-ai",
                 body=body | {"event": "answer"},
@@ -159,21 +153,60 @@ class Deps(ABC):
             logger.error(f"Unknown event type - {type(event).__name__}")
 
     async def add_error(self, body: dict[str, Any], origin: str = "opale") -> None:
-        await add(
-            self.get_scope_id(),
-            self.user_id,
-            self.session_id,
+        await self.add(
             type="error",
             origin=origin,
             body=body,
         )
 
     async def add_info(self, body: dict[str, Any], origin: str = "opale") -> None:
-        await add(
-            self.get_scope_id(),
-            self.user_id,
-            self.session_id,
+        await self.add(
             type="info",
             origin=origin,
             body=body,
         )
+
+    async def start(self) -> None:
+        await self.redis.set(self.key_live(), 1)
+        await self.add(
+            type="begin",
+            origin="opale",
+            body={"session_id": self.session_id},
+        )
+
+    async def stop(self, grace_period: int = 5) -> None:
+        await self.add(type="end", origin="opale")
+        await self.redis.delete(self.key_live())
+        await self.redis.expire(self.key(), grace_period)
+
+    async def is_live(self) -> bool:
+        return await self.redis.get(self.key_live()) is not None
+
+    async def listen(
+        self, *, wait: int = 3, timeout: int = 60, serialize: bool = True
+    ) -> AsyncGenerator[dict[str, Any] | str, None]:
+        counter, last_id = 0, "0"
+        while True:
+            res = await self.redis.xread({self.key(): last_id}, block=1000)
+            if len(res) == 0:
+                if (last_id == "0" and counter >= wait) or (last_id != "0" and counter >= timeout):
+                    break
+                counter += 1
+                continue
+            counter = 0
+            for _, entries in res:
+                for entry_id, entry in entries:
+                    last_id = entry_id if isinstance(entry_id, str) else entry_id.decode()
+                    ev_type = entry[b"type"].decode()
+                    if ev_type == "end":
+                        return
+                    ev_origin = entry[b"origin"].decode()
+                    ev_body: dict[str, Any] = orjson.loads(entry.get(b"body", b"{}"))
+                    event: dict[str, Any] = {"type": ev_type, "origin": ev_origin, "body": ev_body}
+                    if serialize:
+                        yield orjson.dumps(event).decode()
+                    else:
+                        yield event
+
+    async def cancel(self) -> bool:
+        return await self.redis.getdel(self.key_live()) is not None

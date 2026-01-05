@@ -1,4 +1,3 @@
-import pytest
 import pytest_asyncio
 from fakeredis import FakeAsyncRedis
 
@@ -11,4 +10,3 @@ async def redis():
     configure(Config(redis=client, key_prefix="test"))
     yield client
     await client.aclose()
-
