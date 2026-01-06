@@ -1,15 +1,34 @@
 [project]
-name = "opale-agent-stream"
-version = "0.1.0"
-description = ""
+name = "pydantic-ai-stream"
+version = "0.0.1a1"
+description = "Production runtime for pydantic-ai agents with structured event streaming, session persistence, and cancellation"
 readme = "README.md"
-requires-python = ">=3.12"
-dependencies = ["pydantic-ai>=1.33.0", "redis>=7.1.0"]
 authors = [{ name = "Opale OSS", email = "oss@opale.ai" }]
+urls = { Homepage = "https://github.com/opale-ai/pydantic-ai-stream", Repository = "https://github.com/opale-ai/pydantic-ai-stream" }
+license = "MIT"
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+keywords = ["pydantic-ai", "agent", "streaming", "redis", "llm"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Framework :: Pydantic-AI",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Typing :: Typed",
+]
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/opale"]
+requires-python = ">=3.11"
+dependencies = ["pydantic-ai>=1.33", "redis>=5"]
+
+[dependency-groups]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "fakeredis>=2.26"]
+examples = ["typer>=0.21", "fastapi>=0.128.0", "iredis>=0.15.2"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]

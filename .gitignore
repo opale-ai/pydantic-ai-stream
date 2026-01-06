@@ -1,10 +1,6 @@
 # Python-generated files
 __pycache__/
-*.py[oc]
-build/
 dist/
-wheels/
-*.egg-info
 uv.lock
 
 # Virtual environments
@@ -12,3 +8,6 @@ uv.lock
 
 # Mise
 .mise.local.toml
+
+# IRedis
+iredis.log
