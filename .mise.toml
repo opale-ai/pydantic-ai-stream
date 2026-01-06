@@ -17,4 +17,7 @@ REDIS_ASYNC_POOL_SIZE = 10
 PYDANTIC_AI_GATEWAY_API_KEY = "<secret>"
 
 [tasks.ci]
-run = ["ruff format", "ruff check --fix", "ty check"]
+run = ["ruff format", "ruff check --fix", "ty check src/ tests/"]
+
+[tasks.tools]
+run = ["uv tool install ruff", "uv tool install ty"]

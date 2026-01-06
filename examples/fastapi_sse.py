@@ -1,3 +1,5 @@
+"""FastAPI SSE example for pydantic-ai-stream."""
+
 import asyncio
 import uuid
 from contextlib import asynccontextmanager
@@ -10,15 +12,7 @@ from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext
 from redis.asyncio import Redis
 
-from opale.agx import (
-    Config,
-    Deps,
-    Session,
-    cancel,
-    configure,
-    listen,
-    run,
-)
+from pydantic_ai_stream import Deps, Session, run
 
 
 @dataclass
@@ -27,10 +21,9 @@ class AppDeps(Deps):
         return 1
 
 
-class FileSession(Session):
-    def __init__(self, session_id: str):
-        super().__init__()
-        self.session_id = session_id
+@dataclass
+class MemorySession(Session):
+    session_id: str
 
     async def load(self) -> None:
         pass
@@ -39,7 +32,7 @@ class FileSession(Session):
         pass
 
 
-agent = Agent(
+agent: Agent[AppDeps, str] = Agent(
     "openai:gpt-4o-mini",
     system_prompt="You are a helpful assistant. Be concise.",
     deps_type=AppDeps,
@@ -59,7 +52,7 @@ async def calculate(ctx: RunContext[AppDeps], expression: str) -> str:
     if not all(c in allowed for c in expression):
         return "Invalid expression"
     try:
-        return str(eval(expression))
+        return str(eval(expression))  # noqa: S307
     except Exception:
         return "Error evaluating expression"
 
@@ -71,7 +64,6 @@ redis_client: Redis | None = None
 async def lifespan(app: FastAPI):
     global redis_client
     redis_client = Redis.from_url("redis://localhost:6379", decode_responses=False)
-    configure(Config(redis=redis_client, key_prefix="agx"))
     yield
     if redis_client:
         await redis_client.aclose()
@@ -87,23 +79,25 @@ class PromptRequest(BaseModel):
 
 @app.post("/chat")
 async def chat(req: PromptRequest, request: Request):
+    assert redis_client is not None
     session_id = req.session_id or str(uuid.uuid4())
+    deps = AppDeps(redis=redis_client, user_id=1, session_id=session_id)
 
     async def run_agent():
         await run(
-            FileSession(session_id),
+            MemorySession(session_id=session_id),
             agent,
             req.prompt,
-            deps=AppDeps(user_id=1, session_id=session_id),
+            deps=deps,
         )
 
     asyncio.create_task(run_agent())
     await asyncio.sleep(0.1)
 
     async def event_stream():
-        async for event in listen(1, 1, session_id, serialize=True):
+        async for event in deps.listen(serialize=True):
             if await request.is_disconnected():
-                await cancel(1, 1, session_id)
+                await deps.cancel()
                 break
             yield f"data: {event}\n\n"
 
@@ -112,14 +106,19 @@ async def chat(req: PromptRequest, request: Request):
 
 @app.post("/chat/{session_id}/cancel")
 async def cancel_chat(session_id: str):
-    cancelled = await cancel(1, 1, session_id)
+    assert redis_client is not None
+    deps = AppDeps(redis=redis_client, user_id=1, session_id=session_id)
+    cancelled = await deps.cancel()
     return {"cancelled": cancelled}
 
 
 @app.get("/chat/{session_id}/stream")
 async def stream_chat(session_id: str, request: Request):
+    assert redis_client is not None
+    deps = AppDeps(redis=redis_client, user_id=1, session_id=session_id)
+
     async def event_stream():
-        async for event in listen(1, 1, session_id, serialize=True):
+        async for event in deps.listen(serialize=True):
             if await request.is_disconnected():
                 break
             yield f"data: {event}\n\n"

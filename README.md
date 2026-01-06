@@ -1,4 +1,4 @@
-# opale-agent-stream
+# pydantic-ai-stream
 
 Production runtime for [pydantic-ai](https://ai.pydantic.dev/) agents. Provides structured event streaming via Redis Streams, session persistence, and cancellation support.
 
@@ -7,7 +7,7 @@ Production runtime for [pydantic-ai](https://ai.pydantic.dev/) agents. Provides 
 ## Install
 
 ```bash
-pip install opale-agent-stream
+pip install pydantic-ai-stream
 ```
 
 ## Quick Start
@@ -17,43 +17,42 @@ from dataclasses import dataclass
 from redis.asyncio import Redis
 from pydantic_ai import Agent
 
-from opale.agx import Config, Deps, Session, configure, run, listen
+from pydantic_ai_stream import Deps, Session, run
 
-# 1. Configure Redis
-redis = Redis.from_url("redis://localhost:6379")
-configure(Config(redis=redis))
-
-# 2. Define your deps
+# 1. Define your deps (includes Redis client)
 @dataclass
 class MyDeps(Deps):
     def get_scope_id(self) -> int:
         return 1
 
-# 3. Implement session persistence
+# 2. Implement session persistence
 @dataclass
 class MySession(Session):
-    id: str
-    
+    session_id: str
+
     async def load(self) -> None:
         pass  # Load from your storage
-    
+
     async def save(self) -> None:
         pass  # Save to your storage
 
-# 4. Create agent and run
+# 3. Create agent and run
 agent = Agent("openai:gpt-4o-mini", deps_type=MyDeps)
+redis = Redis.from_url("redis://localhost:6379")
 
 async def main():
+    deps = MyDeps(redis=redis, user_id=1, session_id="session-1")
     await run(
-        MySession(id="session-1"),
+        MySession(session_id="session-1"),
         agent,
         "Hello, world!",
-        deps=MyDeps(user_id=1, session_id="session-1"),
+        deps=deps,
     )
 
-# 5. Stream events (in another coroutine/process)
+# 4. Stream events (in another coroutine/process)
 async def consume():
-    async for event in listen(1, 1, "session-1"):
+    deps = MyDeps(redis=redis, user_id=1, session_id="session-1")
+    async for event in deps.listen():
         print(event)
 ```
 
@@ -73,11 +72,11 @@ Events are stored in Redis Streams with three fields:
 
 | type | origin | Usage |
 |------|--------|-------|
-| `begin` | opale | Session start |
+| `begin` | pydantic-ai-stream | Session start |
 | `event` | pydantic-ai | LLM interaction events |
-| `error` | opale / custom | Error during execution |
-| `info` | opale / custom | Informational |
-| `end` | opale | Session complete |
+| `error` | developer / custom | Error during execution |
+| `info` | developer / custom | Informational |
+| `end` | pydantic-ai-stream | Session complete |
 
 ### Event Body Schema (type=event)
 
@@ -91,23 +90,16 @@ Events are stored in Redis Streams with three fields:
 | `content_delta` | str | Delta events — incremental |
 | `tool_name` | str | Tool call/return |
 | `tool_call_id` | str | Tool correlation |
-| `args` | dict | Tool call — emitted at node end |
+| `args` | dict | Tool call — emitted at part end |
 
 ## Configuration
 
+Configure the Redis key prefix via settings:
+
 ```python
-from dataclasses import dataclass
-from redis.asyncio import Redis
-from opale.agx import Config, configure
+from pydantic_ai_stream import settings
 
-@dataclass
-class Config:
-    redis: Redis      # Injected async Redis client
-    key_prefix: str   # Key prefix (default: "agx")
-
-# Initialize once at startup
-redis = Redis.from_url("redis://localhost:6379")
-configure(Config(redis=redis, key_prefix="myapp"))
+settings.set_redis_prefix("myapp")  # default: "pyaix"
 ```
 
 ### Key Patterns
@@ -122,59 +114,66 @@ configure(Config(redis=redis, key_prefix="myapp"))
 ### Core
 
 ```python
-async def run(session, agent, user_prompt, deps, **kwargs)
+async def run(session, agent, user_prompt, deps, **kwargs) -> None
 ```
 Execute agent with streaming. Wraps `Agent.iter()`, emits events, handles cancellation.
 
 ```python
 class AgxCanceledError(Exception)
 ```
-Raised when execution is cancelled via `cancel()`.
+Raised when execution is cancelled via `deps.cancel()`.
 
 ### Session
 
 ```python
 class Session(ABC):
     msgs: list[ModelMessage]
-    
-    async def load(self) -> None: ...      # Load from storage
-    async def save(self) -> None: ...      # Save to storage
-    def msgs_to_json(self) -> bytes        # Serialize messages
-    def msgs_from_json(self, data: bytes)  # Deserialize messages
-    def get_user_prompt(self) -> str       # Extract initial prompt
+
+    async def load(self) -> None: ...       # Load from storage
+    async def save(self) -> None: ...       # Save to storage
+    def msgs_to_json(self) -> bytes         # Serialize messages
+    def msgs_from_json(self, data: bytes)   # Deserialize messages
+    def get_user_prompt(self) -> str        # Extract initial prompt
     @staticmethod
-    def nodes_from_msgs(msgs) -> list      # Reconstruct node structure
+    def nodes_from_msgs(msgs) -> list       # Reconstruct node structure
 ```
 
 ### Deps
 
 ```python
+@dataclass
 class Deps(ABC):
+    redis: AsyncRedis
     user_id: int
     session_id: str
-    runtime: Runtime
-    
+
     @abstractmethod
     def get_scope_id(self) -> int: ...
-    
+
+    # Stream operations
+    async def start(self) -> None
+    async def stop(self, grace_period: int = 5) -> None
+    async def is_live(self) -> bool
+    async def listen(self, *, wait=3, timeout=60, serialize=True) -> AsyncGenerator
+    async def cancel(self) -> bool
+
+    # Event emission
+    async def add(self, *, type: str, origin: str, body: dict | None = None) -> None
+    async def add_error(self, body: dict, origin: str = "developer") -> None
+    async def add_info(self, body: dict, origin: str = "developer") -> None
+
+    # Node tracking (called by run())
     async def add_node_begin(self, node) -> None
     async def add_node_end(self) -> None
     async def add_node_event(self, event) -> None
-    async def add_error(self, body: dict, origin: str = "opale") -> None
-    async def add_info(self, body: dict, origin: str = "opale") -> None
 ```
 
-### Stream Operations
+### Query Active Sessions
 
 ```python
-async def start(scope_id, user_id, session_id) -> None
-async def stop(scope_id, user_id, session_id, grace_period=5) -> None
-async def add(scope_id, user_id, session_id, *, type, origin, body=None) -> None
-async def is_live(scope_id, user_id, session_id) -> bool
-async def listen(scope_id, user_id, session_id, *, wait=3, timeout=60, serialize=True) -> AsyncGenerator
-async def cancel(scope_id, user_id, session_id) -> bool
-async def q(scope_id, user_id) -> AsyncGenerator[tuple[int, int, str], None]
+async def q(redis, scope_id, user_id) -> AsyncGenerator[tuple[int, int, str], None]
 ```
+Scan for active sessions (those with live flag set).
 
 ## Example: FastAPI SSE
 
@@ -186,25 +185,26 @@ See `examples/fastapi_sse.py` for a complete example with:
 ```python
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
-from opale.agx import configure, Config, run, listen, cancel
-
-app = FastAPI()
+from pydantic_ai_stream import Deps, Session, run
 
 @app.post("/chat")
 async def chat(prompt: str, session_id: str):
+    deps = MyDeps(redis=redis, user_id=1, session_id=session_id)
+
     # Start agent in background
-    asyncio.create_task(run(...))
-    
+    asyncio.create_task(run(MySession(...), agent, prompt, deps=deps))
+
     # Stream events via SSE
     async def stream():
-        async for event in listen(1, 1, session_id):
+        async for event in deps.listen():
             yield f"data: {event}\n\n"
-    
+
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 @app.post("/chat/{session_id}/cancel")
 async def cancel_chat(session_id: str):
-    return {"cancelled": await cancel(1, 1, session_id)}
+    deps = MyDeps(redis=redis, user_id=1, session_id=session_id)
+    return {"cancelled": await deps.cancel()}
 ```
 
 ## License

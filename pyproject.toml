@@ -4,7 +4,7 @@ version = "0.0.1a1"
 description = "Production runtime for pydantic-ai agents with structured event streaming, session persistence, and cancellation"
 readme = "README.md"
 authors = [{ name = "Opale OSS", email = "oss@opale.ai" }]
-urls = { Homepage = "https://github.com/opale/pydantic-ai-stream", Repository = "https://github.com/opale/pydantic-ai-stream" }
+urls = { Homepage = "https://github.com/opale-ai/pydantic-ai-stream", Repository = "https://github.com/opale-ai/pydantic-ai-stream" }
 license = "MIT"
 
 keywords = ["pydantic-ai", "agent", "streaming", "redis", "llm"]

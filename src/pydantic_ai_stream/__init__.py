@@ -1,7 +1,8 @@
 import logging
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from pydantic_ai import Agent
-from typing import Any, AsyncGenerator
 from redis.asyncio import Redis as AsyncRedis
 
 from .settings import settings
@@ -20,7 +21,7 @@ class AgxCanceledError(Exception):
 
 async def run(
     session: Session,
-    agent: Agent[Any, Any],
+    agent: Any,
     user_prompt: str,
     deps: Deps,
     **kwargs: Any,
