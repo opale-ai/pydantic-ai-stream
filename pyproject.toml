@@ -1,6 +1,6 @@
 [project]
 name = "pydantic-ai-stream"
-version = "0.0.1a1"
+version = "0.1.0"
 description = "Production runtime for pydantic-ai agents with structured event streaming, session persistence, and cancellation"
 readme = "README.md"
 authors = [{ name = "Opale OSS", email = "oss@opale.ai" }]
