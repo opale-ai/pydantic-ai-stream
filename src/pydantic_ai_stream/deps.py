@@ -149,7 +149,7 @@ class Deps(ABC):
         elif isinstance(event, PartEndEvent):
             if isinstance(event.part, ToolCallPart):
                 part = current.parts[event.index]
-                assert part["tool_call_id"] == ToolCallPart, event.part.tool_call_id
+                assert part["tool_call_id"] == event.part.tool_call_id
                 part["args"] = json.loads(part["args"])
                 await self.add(
                     type="event",

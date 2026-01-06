@@ -33,7 +33,7 @@ class MemorySession(Session):
 
 
 agent: Agent[AppDeps, str] = Agent(
-    "openai:gpt-4o-mini",
+    "gateway/groq:openai/gpt-oss-120b",
     system_prompt="You are a helpful assistant. Be concise.",
     deps_type=AppDeps,
 )
