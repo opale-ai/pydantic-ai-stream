@@ -2,7 +2,7 @@
 
 Production runtime for [pydantic-ai](https://ai.pydantic.dev/) agents. Provides structured event streaming via Redis Streams, session persistence, and cancellation support.
 
-![img](imgs/ai-app.png)
+![img](imgs/ai-app.svg)
 
 ## Install
 
